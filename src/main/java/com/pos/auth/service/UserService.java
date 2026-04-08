@@ -39,7 +39,7 @@ public class UserService {
 
         // 2. Check username uniqueness
         if (userRepository.existsByUsername(request.username())) {
-            throw new BusinessException("Username already exists: " + request.username());
+            throw new BusinessException("USERNAME_TAKEN", "Username already exists: " + request.username());
         }
 
         // 3. Build and persist
@@ -65,12 +65,14 @@ public class UserService {
             role = Role.valueOf(roleValue.toUpperCase());
         } catch (IllegalArgumentException e) {
             throw new BusinessException(
+                    "INVALID_ROLE",
                     "Invalid role '" + roleValue + "'. Allowed values: RECEPTION, CALL_CENTER"
             );
         }
 
         if (!CREATABLE_ROLES.contains(role)) {
             throw new BusinessException(
+                    "ROLE_NOT_ALLOWED",
                     "Role '" + roleValue + "' cannot be assigned via this API. Allowed values: RECEPTION, CALL_CENTER"
             );
         }
