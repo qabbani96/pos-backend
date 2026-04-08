@@ -20,31 +20,30 @@ public class DataInitializer implements CommandLineRunner {
     @Override
     public void run(String... args) {
         if (userRepository.count() == 0) {
-            User admin = User.builder()
-                    .username("admin")
-                    .password(passwordEncoder.encode("admin123"))
-                    .fullName("System Admin")
-                    .role(Role.ADMIN)
-                    .active(true)
-                    .build();
-
-            userRepository.save(admin);
-
-            User casher = User.builder()
-                    .username("casher")
-                    .password(passwordEncoder.encode("casher123"))
-                    .fullName("System Admin")
-                    .role(Role.CASHIER)
-                    .active(true)
-                    .build();
-            userRepository.save(casher);
+            createUser("admin",       "admin123",       "System Admin",    Role.ADMIN);
+            createUser("cashier",     "cashier123",     "Default Cashier", Role.CASHIER);
+            createUser("reception",   "reception123",   "Reception Desk",  Role.RECEPTION);
+            createUser("callcenter",  "callcenter123",  "Call Center",     Role.CALL_CENTER);
 
             log.info("=================================================");
-            log.info("  Default admin user created.");
-            log.info("  Username : admin");
-            log.info("  Password : admin123");
-            log.warn("  SECURITY : Change this password immediately!");
+            log.info("  Default users seeded:");
+            log.info("    admin       / admin123");
+            log.info("    cashier     / cashier123");
+            log.info("    reception   / reception123");
+            log.info("    callcenter  / callcenter123");
+            log.warn("  SECURITY: Change ALL passwords before production!");
             log.info("=================================================");
         }
+    }
+
+    private void createUser(String username, String password, String fullName, Role role) {
+        User user = User.builder()
+                .username(username)
+                .password(passwordEncoder.encode(password))
+                .fullName(fullName)
+                .role(role)
+                .active(true)
+                .build();
+        userRepository.save(user);
     }
 }
