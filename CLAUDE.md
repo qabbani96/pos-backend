@@ -5,125 +5,277 @@ This file provides guidance when working with the Spring Boot backend of the POS
 ## Commands
 
 ```bash
-# Start MySQL (required before running the app)
-docker-compose up -d
-
-# Run the application
+# Start the application (dev)
 mvn spring-boot:run
 
-# Build JAR
-mvn clean package
+# Build without running tests
+mvn clean package -DskipTests
 
-# Run all tests
+# Run tests
 mvn test
 
-# Run a single test class
-mvn test -Dtest=SaleServiceTest
+# Start MySQL via Docker Compose
+docker-compose up -d
 
-# Compile only (regenerates Lombok + MapStruct annotation processors)
-mvn clean compile
+# Stop MySQL
+docker-compose down
 ```
 
-Swagger UI: `http://localhost:8080/swagger-ui.html`
+**Swagger UI:** http://localhost:8080/swagger-ui.html
+**API docs JSON:** http://localhost:8080/v3/api-docs
 
 ---
 
-## Architecture
+## Tech Stack
 
-Spring Boot 3.2.5 · Java 17 · MySQL 8 · Flyway · Spring Security + JWT · SpringDoc OpenAPI.
+- **Java 17** + **Spring Boot 3.2.5**
+- **MySQL 8** — primary database
+- **Spring Data JPA / Hibernate** — ORM (ddl-auto: validate — Flyway owns the schema)
+- **Flyway** — DB migrations in `src/main/resources/db/migration/`
+- **Spring Security + JWT** — stateless auth (Bearer token, 24h expiry)
+- **ZXing** — barcode image generation (PNG, Code 128)
+- **SpringDoc / Swagger** — API documentation at `/swagger-ui.html`
+- **HikariCP** — connection pool (max 10)
 
-**Package layout** (`src/main/java/com/pos/`): each domain module contains its own `controller/`, `service/`, `entity/`, `repository/`, `dto/` sub-packages. Shared infrastructure lives in `common/`.
+---
 
-**Request flow:** `JwtAuthFilter` → Controller → Service (`@Transactional`) → Repository (Spring Data JPA / Hibernate) → MySQL 8.
+## Project Structure
 
-### Module map
+```
+src/main/java/com/pos/
+├── PosApplication.java
+├── auth/
+│   ├── controller/AuthController.java       # POST /api/v1/auth/login
+│   ├── dto/                                 # LoginRequest, LoginResponse
+│   ├── entity/                              # User, Role (enum: ADMIN, CASHIER)
+│   ├── repository/UserRepository.java
+│   ├── security/
+│   │   ├── JwtAuthFilter.java              # OncePerRequestFilter — validates Bearer token
+│   │   ├── JwtService.java                 # generateToken(), validateToken(), extractUsername()
+│   │   └── UserDetailsServiceImpl.java
+│   └── service/AuthService.java
+├── barcode/
+│   ├── controller/BarcodeController.java   # GET /api/v1/barcodes/{itemId}/image
+│   └── service/BarcodeService.java         # Generates PNG; stored under ./uploads/barcodes/
+├── common/
+│   ├── config/
+│   │   ├── DataInitializer.java            # Seeds default admin user on first startup
+│   │   ├── OpenApiConfig.java              # Swagger JWT bearer config
+│   │   └── SecurityConfig.java            # CORS + JWT filter chain
+│   ├── entity/BaseEntity.java              # @MappedSuperclass with createdAt, updatedAt
+│   ├── exception/
+│   │   ├── BusinessException.java          # -> 400 Bad Request
+│   │   ├── ResourceNotFoundException.java  # -> 404 Not Found
+│   │   └── GlobalExceptionHandler.java     # @RestControllerAdvice
+│   └── response/ApiResponse.java           # { success, message, data }
+├── item/
+│   ├── controller/
+│   │   ├── ItemController.java             # CRUD + activate/deactivate
+│   │   └── CategoryController.java         # CRUD + tree endpoint
+│   ├── dto/                                # ItemRequest, ItemResponse, CategoryRequest, CategoryResponse
+│   ├── entity/
+│   │   ├── Item.java                       # name, sku, barcode, price, active, category FK
+│   │   └── Category.java                   # name, parentId (nullable), level, path
+│   ├── repository/
+│   │   ├── ItemRepository.java             # findByBarcodeValue(), paginated filter query
+│   │   └── CategoryRepository.java         # findByParentIsNull(), findByParentId()
+│   └── service/
+│       ├── ItemService.java
+│       └── CategoryService.java            # buildPath(), buildTree()
+├── report/
+│   ├── controller/ReportController.java    # GET /api/v1/reports/*
+│   ├── dto/                                # DashboardSummary, DailySalesReport, TopItemReport, CashierReport
+│   ├── repository/ReportRepository.java    # Native SQL aggregation queries
+│   └── service/ReportService.java
+├── sale/
+│   ├── controller/SaleController.java      # POST /api/v1/sales, GET with filters
+│   ├── dto/                                # SaleRequest, SaleResponse, SaleItemRequest, SaleItemResponse
+│   ├── entity/
+│   │   ├── Sale.java                       # total, status (COMPLETED/REFUNDED), cashier FK, createdAt
+│   │   └── SaleItem.java                   # sale FK, item FK, quantity, unitPrice
+│   ├── repository/
+│   │   ├── SaleRepository.java
+│   │   └── SaleItemRepository.java
+│   └── service/SaleService.java            # createSale() deducts stock atomically in one @Transactional
+└── stock/
+    ├── controller/StockController.java     # GET, PATCH /adjust, GET /movements
+    ├── dto/                                # StockResponse, StockAdjustRequest, StockMovementResponse, StockSummary
+    ├── entity/
+    │   ├── Stock.java                      # item FK (1-to-1), quantity, lowStockThreshold
+    │   └── StockMovement.java              # stock FK, type, quantityChange, note, createdAt
+    ├── repository/
+    │   ├── StockRepository.java
+    │   └── StockMovementRepository.java
+    └── service/StockService.java           # adjust() records movement + updates quantity atomically
 
-| Module | Responsibility |
-|--------|----------------|
-| `auth` | Login, JWT issuance/validation, in-memory logout blacklist |
-| `item` | Product catalog CRUD, active/inactive toggle, paginated search with `categoryId` filter |
-| `category` | Hierarchical category tree (Adjacency List + materialized path). Brand → Category → Sub-Category |
-| `stock` | Inventory levels, stock movement history (IN / OUT / ADJUSTMENT), atomic deduction on sale |
-| `barcode` | ZXing (CODE128 / EAN-13 / QR → PNG) + PDFBox (57×32mm thermal label PDF) |
-| `sale` | Atomic POS checkout: validate stock → create Sale + SaleItem snapshots → deduct stock → record movements |
-| `report` | Dashboard summary, daily revenue, top items, cashier performance — all via native SQL |
-| `common` | `ApiResponse<T>` wrapper, `GlobalExceptionHandler`, `SecurityConfig` (CORS, RBAC) |
+src/main/resources/
+├── application.yml                         # All runtime config
+└── db/migration/
+    ├── V1__init_schema.sql                 # Full initial schema
+    └── V2__category_hierarchy.sql          # Adds level + path columns to categories
+```
+
+---
+
+## API Endpoints
+
+### Auth
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/api/v1/auth/login` | Public | Returns JWT token |
+
+### Items
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/v1/items` | Yes | List (search, categoryId, activeOnly, page, size) |
+| POST | `/api/v1/items` | Yes | Create item |
+| GET | `/api/v1/items/{id}` | Yes | Get by ID |
+| PUT | `/api/v1/items/{id}` | Yes | Update item |
+| PATCH | `/api/v1/items/{id}/activate` | Yes | Set active = true |
+| PATCH | `/api/v1/items/{id}/deactivate` | Yes | Set active = false |
+| DELETE | `/api/v1/items/{id}` | Yes | Delete item |
+| GET | `/api/v1/items/barcode/{value}` | Yes | Lookup by barcode (used by Android POS) |
+
+### Categories
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/v1/categories` | Yes | Flat list (optional parentId filter) |
+| GET | `/api/v1/categories/tree` | Yes | Full nested tree |
+| GET | `/api/v1/categories/roots` | Yes | Brand-level nodes only |
+| GET | `/api/v1/categories/{id}/children` | Yes | Direct children |
+| POST | `/api/v1/categories` | Yes | Create |
+| PUT | `/api/v1/categories/{id}` | Yes | Update |
+| DELETE | `/api/v1/categories/{id}` | Yes | Delete (only if no children or items attached) |
+
+### Stock
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/v1/stock` | Yes | All stock (lowOnly flag) |
+| GET | `/api/v1/stock/{itemId}` | Yes | Single item stock |
+| PATCH | `/api/v1/stock/{itemId}/adjust` | Yes | Adjust quantity (positive or negative) |
+| GET | `/api/v1/stock/{itemId}/movements` | Yes | Movement history |
+
+### Sales
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/api/v1/sales` | Yes | Create sale — auto-deducts stock |
+| GET | `/api/v1/sales` | Yes | List (from, to, status, cashier, page, size) |
+| GET | `/api/v1/sales/{id}` | Yes | Sale details with line items |
+| PATCH | `/api/v1/sales/{id}/refund` | Yes | Mark sale as REFUNDED |
+
+### Reports
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/v1/reports/dashboard` | Yes | KPI summary for today |
+| GET | `/api/v1/reports/daily` | Yes | Daily totals (from, to) |
+| GET | `/api/v1/reports/top-items` | Yes | Top selling items (from, to, limit) |
+| GET | `/api/v1/reports/cashier` | Yes | Sales per cashier (from, to) |
+
+### Barcodes
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/v1/barcodes/{itemId}/image` | Yes | Download barcode PNG |
+
+---
+
+## Key Patterns
+
+### Unified API response
+Every endpoint returns the same envelope — never return raw objects from controllers:
+```java
+return ResponseEntity.ok(ApiResponse.success(data, "Items fetched"));
+
+// Errors — throw, the GlobalExceptionHandler maps them:
+throw new ResourceNotFoundException("Item not found: " + id);  // -> 404
+throw new BusinessException("Insufficient stock for: " + sku); // -> 400
+```
+
+### Layer responsibilities
+- **Controller** — `@Valid` input validation, delegate to service, return `ApiResponse`
+- **Service** — all business logic, `@Transactional` boundaries
+- **Repository** — `JpaRepository` only, no business logic
+
+### Pagination
+All list endpoints accept `page` (0-based) and `size` (default 20):
+```java
+Pageable pageable = PageRequest.of(page, size, Sort.by("createdAt").descending());
+Page<Item> result = itemRepository.findAllWithFilters(search, categoryId, activeOnly, pageable);
+```
 
 ---
 
 ## Category Hierarchy
 
-Categories use an **Adjacency List** with a **materialized path**:
+3-level tree: **Brand (level 0) -> Category (level 1) -> Sub-Category (level 2)**
 
-- `parentId` — nullable FK to parent category (`null` = root / Brand)
-- `level` — 0 = Brand, 1 = Category, 2 = Sub-Category
-- `path` — string like `/1/5/12/` for DFS without recursion
+Each node stores a **materialized path** (`path` column) for efficient tree queries:
+- Brand: `"1"`
+- Category: `"1/5"`
+- Sub-Category: `"1/5/12"`
 
-**Key endpoints:**
-- `GET /api/v1/categories` — flat list (all categories, sorted by level then name)
-- `GET /api/v1/categories/tree` — nested tree with `children[]` populated
-- `GET /api/v1/categories/roots` — only level-0 brands
-- `GET /api/v1/categories/{id}/children` — direct children of a node
+`CategoryService.buildPath()` computes this on every create/update.
 
-**`CategoryResponse`** includes: `id`, `name`, `description`, `parentId`, `parentName`, `level`, `path`, `children[]`.
-
-**`ItemResponse`** includes `categoryPath` — a human-readable breadcrumb string built server-side (e.g. `"Apple › Phones › iPhone 15"`). This is used by the Android app to display the category in the cart and last-scanned bar.
-
----
-
-## Database
-
-- **MySQL 8.0** via Docker Compose (`localhost:3306`, db: `pos_db`, user: `pos_user`, pass: `pos_pass`)
-- **Flyway** manages all schema — add new `V{n}__description.sql` files under `src/main/resources/db/migration/`. Never modify existing ones. `ddl-auto: validate` means Hibernate won't auto-alter the schema.
-- `sale_items` stores `item_name` and `unit_price` **snapshots** at transaction time — not FK references to current values.
-- Soft deletes via `active` boolean on `users` and `items`.
-
----
-
-## Security
-
-- **Roles:** `ADMIN` (full access) and `CASHIER` (read catalog, create sales, view own sales). Enforced with `@PreAuthorize` on controllers.
-- Passwords are BCrypt-hashed.
-- JWT secret is Base64-encoded in `application.yml` — **rotate before deploying to production**.
-- CORS currently allows all origins (`*`) — tighten for production.
-
----
-
-## API Conventions
-
-- All endpoints prefixed `/api/v1/`.
-- All responses wrapped: `{ success, message, data, errorCode }`.
-- Paginated endpoints accept `page`, `size`, `sort` (standard Spring `Pageable`).
-- `BusinessException` and `ResourceNotFoundException` are caught by `GlobalExceptionHandler` (`@RestControllerAdvice`).
+`CategoryResponse` includes a `categoryPath` breadcrumb string (`"Brand > Category > Sub"`) consumed by the Android app and the dashboard.
 
 ---
 
 ## Stock Movement Types
 
-| Type | Behaviour |
-|------|-----------|
-| `IN` | Adds to existing quantity (e.g. receiving a shipment) |
-| `OUT` | Subtracts from existing quantity (e.g. damaged goods) |
-| `ADJUSTMENT` | Overrides to an exact quantity (e.g. physical stocktake reconciliation) |
-
-Sale deductions are recorded as an internal `SALE` movement type automatically.
-
----
-
-## MapStruct + Lombok
-
-Both use annotation processors. The `maven-compiler-plugin` in `pom.xml` runs Lombok before MapStruct. If you see compilation errors after adding new mappers or Lombok-annotated classes, run `mvn clean compile` to regenerate.
+| Type | Triggered by |
+|------|-------------|
+| `PURCHASE` | Manual stock increase (restocking) |
+| `SALE` | Auto-deducted by `SaleService.createSale()` |
+| `ADJUSTMENT` | Manual admin correction (positive or negative) |
+| `REFUND` | Stock restored when a sale is marked REFUNDED |
 
 ---
 
-## Barcode Files
+## Database
 
-Generated barcode PNGs are stored in `./uploads/barcodes/` (relative to working directory at startup). This directory is created at runtime. The label PDF is streamed directly as a download — not stored on disk.
+### Connection (dev defaults in application.yml)
+```
+Host:     localhost:3306
+Database: pos_db
+User:     pos_user
+Password: pos_pass
+```
+
+### Flyway migrations
+- `V1__init_schema.sql` — full initial schema (all tables)
+- `V2__category_hierarchy.sql` — adds `level` and `path` columns to categories
+
+Never edit existing migration files. Always add a new `V{n}__description.sql`.
+
+### Default admin account (seeded by DataInitializer)
+```
+username: admin
+password: admin123
+```
+Change this before going to production.
+
+---
+
+## Security
+
+- All endpoints except `POST /api/v1/auth/login` require `Authorization: Bearer <token>`
+- JWT secret is in `application.yml` under `jwt.secret` — **change before production**
+- CORS is configured in `SecurityConfig.java`
+- Allowed methods: `GET, POST, PUT, PATCH, DELETE, OPTIONS`
+- **`PATCH` must stay in allowed methods** — `/activate`, `/deactivate`, `/adjust`, and
+  `/refund` all use `@PatchMapping`. Removing `PATCH` causes preflight CORS rejection.
 
 ---
 
 ## Known Gotchas
 
-- **JPQL FETCH JOIN + pagination:** Any repository method that joins a collection with `JOIN FETCH` must include an explicit `countQuery` on the `@Query` annotation, otherwise Spring Data will generate a broken count query and throw at runtime.
-- **Native SQL aggregates:** `SUM()` can return `Integer` or `Long` instead of `BigDecimal` when the result set is empty. Use `COALESCE(SUM(x), 0)` with care — prefer returning `null` and handling it in the service layer.
-- **`categoryPath` is computed at read time** — it's not stored in the DB. If the category tree is very deep or has many items, consider caching it.
+- **`ddl-auto: validate`** — Hibernate does NOT create or alter tables. Add a Flyway
+  migration before adding any entity field, or the app fails on startup with a
+  schema-validation error.
+- **`categoryPath` on `ItemResponse`** — built as `"Brand > Category > Sub"`. The Android
+  app displays this directly; do not change the separator without updating the app.
+- **`DataInitializer`** checks if admin exists before inserting — safe on every startup.
+- **`baseline-on-migrate: true`** — required if Flyway runs against a DB that already has
+  tables but no `flyway_schema_history` row.
+- **JWT expiry is 24 hours** — the Android app does not auto-refresh; users must re-login.
+- **Barcode images** — stored at `./uploads/barcodes/{itemId}.png` relative to the working
+  directory. Ensure the folder is writable and back it up separately from the DB.
