@@ -1,17 +1,20 @@
 package com.pos.auth.service;
 
 import com.pos.auth.dto.CreateUserRequest;
+import com.pos.auth.dto.UpdateUserRequest;
 import com.pos.auth.dto.UserResponse;
 import com.pos.auth.entity.Role;
 import com.pos.auth.entity.User;
 import com.pos.auth.repository.UserRepository;
 import com.pos.common.exception.BusinessException;
+import com.pos.common.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
 import java.util.Set;
 
 @Service
@@ -20,29 +23,39 @@ import java.util.Set;
 public class UserService {
 
     /**
-     * Roles that an ADMIN is allowed to create via the API.
-     * ADMIN and CASHIER are excluded — they are system roles managed separately.
+     * Roles that an ADMIN is allowed to create or assign via the API.
+     * ADMIN and CASHIER are system roles — managed separately.
      */
-    private static final Set<Role> CREATABLE_ROLES = Set.of(Role.RECEPTION, Role.CALL_CENTER);
+    private static final Set<Role> MANAGEABLE_ROLES = Set.of(Role.RECEPTION, Role.CALL_CENTER);
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
 
-    /**
-     * Creates a new user with a restricted role (RECEPTION or CALL_CENTER).
-     * Only ADMIN can call this; the controller enforces that via @PreAuthorize.
-     */
+    // ── Read ─────────────────────────────────────────────────────────────────
+
+    @Transactional(readOnly = true)
+    public List<UserResponse> getAllUsers() {
+        return userRepository.findAll()
+                .stream()
+                .map(UserResponse::from)
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public UserResponse getUserById(Long id) {
+        return UserResponse.from(findOrThrow(id));
+    }
+
+    // ── Create ───────────────────────────────────────────────────────────────
+
     @Transactional
     public UserResponse createUser(CreateUserRequest request) {
-        // 1. Validate role is one of the allowed values
         Role role = parseAndValidateRole(request.role());
 
-        // 2. Check username uniqueness
         if (userRepository.existsByUsername(request.username())) {
             throw new BusinessException("USERNAME_TAKEN", "Username already exists: " + request.username());
         }
 
-        // 3. Build and persist
         User user = User.builder()
                 .username(request.username())
                 .password(passwordEncoder.encode(request.password()))
@@ -53,11 +66,71 @@ public class UserService {
 
         User saved = userRepository.save(user);
         log.info("User created: username={}, role={}", saved.getUsername(), saved.getRole());
-
         return UserResponse.from(saved);
     }
 
-    // ── private helpers ──────────────────────────────────────────────────────
+    // ── Update ───────────────────────────────────────────────────────────────
+
+    @Transactional
+    public UserResponse updateUser(Long id, UpdateUserRequest request) {
+        User user = findOrThrow(id);
+
+        if (request.fullName() != null) {
+            user.setFullName(request.fullName());
+        }
+        if (request.password() != null && !request.password().isBlank()) {
+            user.setPassword(passwordEncoder.encode(request.password()));
+        }
+        if (request.role() != null) {
+            user.setRole(parseAndValidateRole(request.role()));
+        }
+        if (request.active() != null) {
+            user.setActive(request.active());
+        }
+
+        User saved = userRepository.save(user);
+        log.info("User updated: id={}, username={}", saved.getId(), saved.getUsername());
+        return UserResponse.from(saved);
+    }
+
+    // ── Activate / Deactivate ────────────────────────────────────────────────
+
+    @Transactional
+    public UserResponse activateUser(Long id) {
+        User user = findOrThrow(id);
+        user.setActive(true);
+        log.info("User activated: id={}", id);
+        return UserResponse.from(userRepository.save(user));
+    }
+
+    @Transactional
+    public UserResponse deactivateUser(Long id) {
+        User user = findOrThrow(id);
+        user.setActive(false);
+        log.info("User deactivated: id={}", id);
+        return UserResponse.from(userRepository.save(user));
+    }
+
+    // ── Delete ───────────────────────────────────────────────────────────────
+
+    @Transactional
+    public void deleteUser(Long id) {
+        User user = findOrThrow(id);
+
+        if (user.getRole() == Role.ADMIN) {
+            throw new BusinessException("CANNOT_DELETE_ADMIN", "Admin accounts cannot be deleted");
+        }
+
+        userRepository.delete(user);
+        log.info("User deleted: id={}, username={}", id, user.getUsername());
+    }
+
+    // ── Private helpers ──────────────────────────────────────────────────────
+
+    private User findOrThrow(Long id) {
+        return userRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found with id: " + id));
+    }
 
     private Role parseAndValidateRole(String roleValue) {
         Role role;
@@ -70,7 +143,7 @@ public class UserService {
             );
         }
 
-        if (!CREATABLE_ROLES.contains(role)) {
+        if (!MANAGEABLE_ROLES.contains(role)) {
             throw new BusinessException(
                     "ROLE_NOT_ALLOWED",
                     "Role '" + roleValue + "' cannot be assigned via this API. Allowed values: RECEPTION, CALL_CENTER"
