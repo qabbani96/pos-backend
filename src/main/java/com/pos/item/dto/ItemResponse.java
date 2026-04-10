@@ -32,9 +32,21 @@ public record ItemResponse(
         String      imageUrl,
         Boolean     active,
         LocalDateTime createdAt,
-        LocalDateTime updatedAt
+        LocalDateTime updatedAt,
+
+        /** Current stock quantity. Null when not requested (e.g., admin item list). */
+        Integer     stockQuantity,
+
+        /** True if stock quantity > 0. Null when not requested. */
+        Boolean     inStock
 ) {
+    /** Standard factory — stock fields left null (backwards-compatible). */
     public static ItemResponse from(Item item) {
+        return fromWithStock(item, null);
+    }
+
+    /** Factory that includes live stock data (used by Call Center parts view). */
+    public static ItemResponse fromWithStock(Item item, Integer stockQty) {
         Category cat = item.getCategory();
         return new ItemResponse(
                 item.getId(),
@@ -51,7 +63,9 @@ public record ItemResponse(
                 item.getImageUrl(),
                 item.getActive(),
                 item.getCreatedAt(),
-                item.getUpdatedAt()
+                item.getUpdatedAt(),
+                stockQty,
+                stockQty != null ? stockQty > 0 : null
         );
     }
 

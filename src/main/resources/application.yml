@@ -65,6 +65,13 @@ springdoc:
 app:
   upload-dir: ./uploads/barcodes
 
+  # ─── CORS ─────────────────────────────────────────────────────────────────
+  # Comma-separated list of allowed origins.
+  # Development: localhost React dev server (Vite default 5173, CRA default 3000).
+  # Production: replace with your actual domain(s), e.g. https://pos.example.com
+  cors:
+    allowed-origins: "http://localhost:5173,http://localhost:3000"
+
 # ─── Logging ──────────────────────────────────────────────────────────────────
 logging:
   level:

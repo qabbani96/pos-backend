@@ -3,6 +3,7 @@ package com.pos.common.config;
 import com.pos.auth.security.JwtAuthFilter;
 import com.pos.auth.security.UserDetailsServiceImpl;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -23,6 +24,7 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+import java.util.Arrays;
 import java.util.List;
 
 @Configuration
@@ -34,6 +36,14 @@ public class SecurityConfig {
     private final JwtAuthFilter jwtAuthFilter;
     private final UserDetailsServiceImpl userDetailsService;
 
+    /**
+     * Comma-separated list of allowed CORS origins, configured in application.yml.
+     * Development: http://localhost:5173,http://localhost:3000
+     * Production: set to your actual domain(s), e.g. https://pos.example.com
+     */
+    @Value("${app.cors.allowed-origins}")
+    private String allowedOrigins;
+
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         return http
@@ -44,7 +54,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         // Public endpoints
                         .requestMatchers("/api/v1/auth/login").permitAll()
-                        // Swagger UI (dev only — restrict in production)
+                        // Swagger UI (dev only — lock this down in production)
                         .requestMatchers(
                                 "/swagger-ui/**",
                                 "/swagger-ui.html",
@@ -79,13 +89,19 @@ public class SecurityConfig {
     }
 
     /**
-     * CORS configuration — allows React dev server (localhost:3000) and
-     * Android app to call the API. Adjust origins in production.
+     * CORS configuration driven by app.cors.allowed-origins in application.yml.
+     * Never use a wildcard ("*") in production with allowCredentials(true) — that
+     * lets any domain send credentialed cross-origin requests to the API.
      */
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
+        List<String> origins = Arrays.stream(allowedOrigins.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .toList();
+
         CorsConfiguration config = new CorsConfiguration();
-        config.setAllowedOriginPatterns(List.of("*"));   // Tighten this in production
+        config.setAllowedOrigins(origins);
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
         config.setAllowCredentials(true);

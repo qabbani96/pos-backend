@@ -10,6 +10,7 @@ import com.pos.item.entity.Item.BarcodeType;
 import com.pos.item.repository.CategoryRepository;
 import com.pos.item.repository.ItemRepository;
 import com.pos.barcode.service.BarcodeService;
+import com.pos.stock.repository.StockRepository;
 import com.pos.stock.service.StockService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -18,15 +19,20 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class ItemService {
 
-    private final ItemRepository itemRepository;
+    private final ItemRepository     itemRepository;
     private final CategoryRepository categoryRepository;
-    private final StockService stockService;
-    private final BarcodeService barcodeService;
+    private final StockRepository    stockRepository;
+    private final StockService       stockService;
+    private final BarcodeService     barcodeService;
 
     @Transactional(readOnly = true)
     public Page<ItemResponse> findAll(String search, Long categoryId,
@@ -34,7 +40,17 @@ public class ItemService {
         Page<Item> page = activeOnly
                 ? itemRepository.findAllActive(search, categoryId, pageable)
                 : itemRepository.findAll(search, categoryId, pageable);
-        return page.map(ItemResponse::from);
+
+        // Batch-load [itemId, quantity] pairs in a single query — no lazy loading.
+        List<Long> itemIds = page.stream().map(Item::getId).collect(Collectors.toList());
+        Map<Long, Integer> stockMap = stockRepository.findQuantitiesByItemIds(itemIds)
+                .stream()
+                .collect(Collectors.toMap(
+                        row -> ((Number) row[0]).longValue(),
+                        row -> ((Number) row[1]).intValue()
+                ));
+
+        return page.map(item -> ItemResponse.fromWithStock(item, stockMap.get(item.getId())));
     }
 
     @Transactional(readOnly = true)

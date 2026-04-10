@@ -1,5 +1,6 @@
 package com.pos.auth.entity;
 
+import com.pos.branch.entity.Branch;
 import com.pos.common.entity.BaseEntity;
 import jakarta.persistence.*;
 import lombok.*;
@@ -39,6 +40,11 @@ public class User extends BaseEntity implements UserDetails {
     @Column(nullable = false)
     @Builder.Default
     private boolean active = true;
+
+    /** Nullable — only RECEPTION and CALL_CENTER users belong to a specific branch. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "branch_id")
+    private Branch branch;
 
     // ─── UserDetails implementation ───────────────────────────────────────────
 
