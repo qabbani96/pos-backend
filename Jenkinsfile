@@ -25,8 +25,7 @@ pipeline {
             steps {
                 echo 'Compiling Spring Boot application...'
                 // Ensures Maven wrapper is executable
-                sh 'chmod +x mvnw'
-                sh './mvnw clean package -DskipTests'
+                sh 'mvn clean package -DskipTests'
             }
         }
 
