@@ -30,9 +30,10 @@ public class SaleController {
 
     /**
      * Core endpoint — called by the Android POS after the cashier confirms the cart.
-     * Accessible by both CASHIER and ADMIN roles.
+     * Accessible by CASHIER and ADMIN roles only.
      */
     @PostMapping
+    @PreAuthorize("hasAnyRole('CASHIER', 'ADMIN')")
     @Operation(summary = "Process a sale (atomic: validate stock → save → deduct)")
     public ResponseEntity<ApiResponse<SaleResponse>> processSale(
             @Valid @RequestBody SaleRequest request) {
@@ -45,6 +46,7 @@ public class SaleController {
      * Receipt lookup — used by Android to re-display or reprint a receipt.
      */
     @GetMapping("/{id}")
+    @PreAuthorize("hasAnyRole('CASHIER', 'ADMIN', 'ADMIN_BRANCHES')")
     @Operation(summary = "Get sale by ID (receipt)")
     public ResponseEntity<ApiResponse<SaleResponse>> findById(@PathVariable Long id) {
         return ResponseEntity.ok(ApiResponse.success(saleService.findById(id)));

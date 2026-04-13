@@ -10,6 +10,8 @@ import java.util.List;
 public record SaleResponse(
         Long id,
         String cashierUsername,
+        Long shopId,
+        String shopName,
         BigDecimal totalAmount,
         SaleStatus status,
         String note,
@@ -24,6 +26,8 @@ public record SaleResponse(
         return new SaleResponse(
                 sale.getId(),
                 sale.getCashier().getUsername(),
+                sale.getShop() != null ? sale.getShop().getId()   : null,
+                sale.getShop() != null ? sale.getShop().getName() : null,
                 sale.getTotalAmount(),
                 sale.getStatus(),
                 sale.getNote(),

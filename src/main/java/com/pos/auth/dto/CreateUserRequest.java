@@ -18,5 +18,9 @@ public record CreateUserRequest(
         String fullName,
 
         @NotNull(message = "Role is required")
-        String role  // accepted values: RECEPTION, CALL_CENTER
+        String role,     // accepted values: RECEPTION, CALL_CENTER
+
+        Long branchId,   // required when role is RECEPTION or CALL_CENTER
+
+        Long shopId      // required when role is CASHIER or INVENTORY
 ) {}

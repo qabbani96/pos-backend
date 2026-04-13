@@ -6,10 +6,16 @@ import com.pos.auth.dto.UserResponse;
 import com.pos.auth.entity.Role;
 import com.pos.auth.entity.User;
 import com.pos.auth.repository.UserRepository;
+import com.pos.branch.entity.Branch;
+import com.pos.branch.service.BranchService;
 import com.pos.common.exception.BusinessException;
 import com.pos.common.exception.ResourceNotFoundException;
+import com.pos.shop.entity.Shop;
+import com.pos.shop.service.ShopService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,13 +29,21 @@ import java.util.Set;
 public class UserService {
 
     /**
-     * Roles that an ADMIN is allowed to create or assign via the API.
-     * ADMIN and CASHIER are system roles — managed separately.
+     * Roles that ADMIN / ADMIN_BRANCHES can create or assign via the API.
      */
-    private static final Set<Role> MANAGEABLE_ROLES = Set.of(Role.RECEPTION, Role.CALL_CENTER);
+    private static final Set<Role> MANAGEABLE_ROLES =
+            Set.of(Role.RECEPTION, Role.CALL_CENTER, Role.CASHIER, Role.INVENTORY);
 
-    private final UserRepository userRepository;
+    /** Roles that require a branch to be assigned. */
+    private static final Set<Role> BRANCH_REQUIRED_ROLES = Set.of(Role.RECEPTION, Role.CALL_CENTER);
+
+    /** Roles that require a shop to be assigned. */
+    private static final Set<Role> SHOP_REQUIRED_ROLES = Set.of(Role.CASHIER, Role.INVENTORY);
+
+    private final UserRepository  userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final BranchService   branchService;
+    private final ShopService     shopService;
 
     // ── Read ─────────────────────────────────────────────────────────────────
 
@@ -52,20 +66,33 @@ public class UserService {
     public UserResponse createUser(CreateUserRequest request) {
         Role role = parseAndValidateRole(request.role());
 
+        if (callerIsAdminBranchesOnly() && role == Role.CASHIER) {
+            throw new BusinessException(
+                    "ROLE_NOT_ALLOWED",
+                    "ADMIN_BRANCHES cannot create users with the CASHIER role."
+            );
+        }
+
         if (userRepository.existsByUsername(request.username())) {
             throw new BusinessException("USERNAME_TAKEN", "Username already exists: " + request.username());
         }
+
+        Branch branch = resolveBranch(role, request.branchId());
+        Shop   shop   = resolveShop(role, request.shopId());
 
         User user = User.builder()
                 .username(request.username())
                 .password(passwordEncoder.encode(request.password()))
                 .fullName(request.fullName())
                 .role(role)
+                .branch(branch)
+                .shop(shop)
                 .active(true)
                 .build();
 
         User saved = userRepository.save(user);
-        log.info("User created: username={}, role={}", saved.getUsername(), saved.getRole());
+        log.info("User created: username={}, role={}, shop={}", saved.getUsername(), saved.getRole(),
+                shop != null ? shop.getName() : "none");
         return UserResponse.from(saved);
     }
 
@@ -82,10 +109,23 @@ public class UserService {
             user.setPassword(passwordEncoder.encode(request.password()));
         }
         if (request.role() != null) {
-            user.setRole(parseAndValidateRole(request.role()));
+            Role newRole = parseAndValidateRole(request.role());
+            if (callerIsAdminBranchesOnly() && newRole == Role.CASHIER) {
+                throw new BusinessException(
+                        "ROLE_NOT_ALLOWED",
+                        "ADMIN_BRANCHES cannot assign the CASHIER role."
+                );
+            }
+            user.setRole(newRole);
         }
         if (request.active() != null) {
             user.setActive(request.active());
+        }
+        if (request.branchId() != null) {
+            user.setBranch(request.branchId() == -1L ? null : branchService.findOrThrow(request.branchId()));
+        }
+        if (request.shopId() != null) {
+            user.setShop(request.shopId() == -1L ? null : shopService.getOrThrow(request.shopId()));
         }
 
         User saved = userRepository.save(user);
@@ -127,7 +167,22 @@ public class UserService {
 
     // ── Private helpers ──────────────────────────────────────────────────────
 
-    private User findOrThrow(Long id) {
+    /**
+     * Returns true when the currently authenticated principal has the
+     * ADMIN_BRANCHES role but NOT ADMIN.  Used to enforce tighter role
+     * restrictions for branch admins (e.g. they cannot assign CASHIER).
+     */
+    private boolean callerIsAdminBranchesOnly() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null) return false;
+        boolean hasAdminBranches = auth.getAuthorities().stream()
+                .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN_BRANCHES"));
+        boolean hasAdmin = auth.getAuthorities().stream()
+                .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
+        return hasAdminBranches && !hasAdmin;
+    }
+
+    public User findOrThrow(Long id) {
         return userRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found with id: " + id));
     }
@@ -139,17 +194,43 @@ public class UserService {
         } catch (IllegalArgumentException e) {
             throw new BusinessException(
                     "INVALID_ROLE",
-                    "Invalid role '" + roleValue + "'. Allowed values: RECEPTION, CALL_CENTER"
+                    "Invalid role '" + roleValue + "'. Allowed: RECEPTION, CALL_CENTER, CASHIER, INVENTORY"
             );
         }
 
         if (!MANAGEABLE_ROLES.contains(role)) {
             throw new BusinessException(
                     "ROLE_NOT_ALLOWED",
-                    "Role '" + roleValue + "' cannot be assigned via this API. Allowed values: RECEPTION, CALL_CENTER"
+                    "Role '" + roleValue + "' cannot be assigned via this API."
             );
         }
 
         return role;
+    }
+
+    private Branch resolveBranch(Role role, Long branchId) {
+        if (BRANCH_REQUIRED_ROLES.contains(role)) {
+            if (branchId == null) {
+                throw new BusinessException(
+                        "BRANCH_REQUIRED",
+                        "A branch must be assigned for role: " + role.name()
+                );
+            }
+            return branchService.findOrThrow(branchId);
+        }
+        return null;
+    }
+
+    private Shop resolveShop(Role role, Long shopId) {
+        if (SHOP_REQUIRED_ROLES.contains(role)) {
+            if (shopId == null) {
+                throw new BusinessException(
+                        "SHOP_REQUIRED",
+                        "A shop must be assigned for role: " + role.name()
+                );
+            }
+            return shopService.getOrThrow(shopId);
+        }
+        return null;
     }
 }

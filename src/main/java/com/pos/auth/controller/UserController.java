@@ -20,9 +20,9 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/v1/users")
 @RequiredArgsConstructor
-@Tag(name = "User Management", description = "Admin-only user management (RECEPTION and CALL_CENTER roles)")
+@Tag(name = "User Management", description = "User management — ADMIN (all roles) and ADMIN_BRANCHES (no CASHIER)")
 @SecurityRequirement(name = "bearerAuth")
-@PreAuthorize("hasRole('ADMIN')")   // all endpoints in this controller require ADMIN
+@PreAuthorize("hasAnyRole('ADMIN', 'ADMIN_BRANCHES')")
 public class UserController {
 
     private final UserService userService;

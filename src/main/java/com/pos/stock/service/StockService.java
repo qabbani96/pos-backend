@@ -110,10 +110,12 @@ public class StockService {
                 }
                 stock.setQuantity(request.quantity());
             }
+            default -> throw new BusinessException("INVALID_TYPE",
+                    "Central stock only supports IN, OUT, ADJUSTMENT. Use ShopStock for shop-level operations.");
         }
 
         recordMovement(stock.getItem(), request.type(), request.quantity(),
-                request.reference(), request.note(), actor);
+                before, stock.getQuantity(), request.reference(), request.note(), actor);
 
         log.info("action=stock_adjusted, itemId={}, type={}, before={}, after={}, by={}",
                 itemId, request.type(), before, stock.getQuantity(),
@@ -138,25 +140,18 @@ public class StockService {
 
     // ── Internal helpers (package-private for SaleService) ───────────────────
 
-    /**
-     * Called by SaleService during checkout — deducts stock atomically.
-     * No auth check here; SaleService controls access.
-     */
-    @Transactional
-    public void deductForSale(Item item, int quantity, String saleReference) {
-        Stock stock = getStockOrThrow(item.getId());
-        stock.deduct(quantity);   // throws if insufficient
-        recordMovement(item, MovementType.OUT, quantity, saleReference, "Sale deduction", null);
-    }
-
     // ── Private ──────────────────────────────────────────────────────────────
 
     private void recordMovement(Item item, MovementType type, int quantity,
+                                int before, int after,
                                 String reference, String note, User actor) {
         StockMovement movement = StockMovement.builder()
                 .item(item)
+                .shop(null)  // central warehouse movements have no shop
                 .type(type)
                 .quantity(quantity)
+                .balanceBefore(before)
+                .balanceAfter(after)
                 .reference(reference)
                 .note(note)
                 .createdBy(actor)

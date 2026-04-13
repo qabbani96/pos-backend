@@ -10,6 +10,10 @@ public record UserResponse(
         String fullName,
         String role,
         boolean active,
+        Long branchId,
+        String branchName,
+        Long shopId,
+        String shopName,
         LocalDateTime createdAt
 ) {
     /** Convenience factory — maps directly from entity. */
@@ -20,6 +24,10 @@ public record UserResponse(
                 user.getFullName(),
                 user.getRole().name(),
                 user.isActive(),
+                user.getBranch() != null ? user.getBranch().getId()         : null,
+                user.getBranch() != null ? user.getBranch().getBranchName() : null,
+                user.getShop()   != null ? user.getShop().getId()           : null,
+                user.getShop()   != null ? user.getShop().getName()         : null,
                 user.getCreatedAt()
         );
     }

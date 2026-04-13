@@ -16,5 +16,9 @@ public record UpdateUserRequest(
 
         String role,       // null = keep existing role; allowed: RECEPTION, CALL_CENTER
 
-        Boolean active     // null = keep existing status
+        Boolean active,    // null = keep existing status
+
+        Long branchId,     // null = keep existing branch; use -1 to explicitly remove branch
+
+        Long shopId        // null = keep existing shop; use -1 to explicitly remove shop
 ) {}

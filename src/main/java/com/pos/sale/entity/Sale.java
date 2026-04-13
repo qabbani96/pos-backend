@@ -1,6 +1,7 @@
 package com.pos.sale.entity;
 
 import com.pos.auth.entity.User;
+import com.pos.shop.entity.Shop;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
@@ -26,6 +27,11 @@ public class Sale {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "cashier_id", nullable = false)
     private User cashier;
+
+    /** The shop where this sale occurred. Required for shop-stock deduction. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "shop_id")
+    private Shop shop;
 
     @Column(name = "total_amount", nullable = false, precision = 10, scale = 2)
     private BigDecimal totalAmount;

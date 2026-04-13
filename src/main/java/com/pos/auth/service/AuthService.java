@@ -33,11 +33,19 @@ public class AuthService {
 
         log.info("User logged in: username={}, role={}", user.getUsername(), user.getRole());
 
+        Long branchId = user.getBranch() != null ? user.getBranch().getId() : null;
+        Long shopId   = user.getShop()   != null ? user.getShop().getId()   : null;
+        String shopName = user.getShop() != null ? user.getShop().getName() : null;
+
         return new LoginResponse(
                 token,
+                user.getUsername(),
                 user.getRole().name(),
                 user.getFullName(),
-                user.getId()
+                user.getId(),
+                branchId,
+                shopId,
+                shopName
         );
     }
 
